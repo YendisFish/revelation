@@ -24,6 +24,7 @@ mkdir /build/ospkg
 cd /bld/genesis
 cargo build --release
 cp ./target/release/genesis $OS/init
+cp ./genesis.toml $OS/
 
 create_ramfs
 create_bootable

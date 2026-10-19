@@ -6,6 +6,8 @@ edition = "2024"
 [dependencies]
 libc = "0.2.191"
 oracle = { path = "../oracle" }
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.1.8"
 
 [build]
 target = "x86_64-unknown-linux-musl"

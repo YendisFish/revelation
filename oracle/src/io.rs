@@ -40,4 +40,17 @@ impl Logger {
         header += text.into().as_str();
         println!("{}", header);
     }
+
+    pub fn error(&self, text: impl Into<String>) {
+        let mut header = String::new();
+        header += format!("[{}] [ERROR] ", self.name).as_str();
+
+        for fun in &self.extra {
+            let out = fun();
+            header += format!("[{}] ", out).as_str();
+        }
+
+        header += text.into().as_str();
+        println!("{}", header);
+    }
 }

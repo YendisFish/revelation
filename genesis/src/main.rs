@@ -1,5 +1,7 @@
 use oracle::{errors::Unsafe, io::{self, Logger}};
-use std::ffi::CString;
+use std::{ffi::CString, fmt::format};
+
+use crate::types::{SysConfError, parse_config, type_check_config};
 
 mod types;
 mod engine;
@@ -22,7 +24,25 @@ fn main() {
         logger.write("Failed to load dev");
     }
 
-    loop {}
+    loop {
+        if let Some(conf) = parse_config() {
+            let conf = match type_check_config(conf) {
+                Ok(conf) => conf,
+                Err(SysConfError::BinaryAbsent { binary, .. }) => {
+                    logger.error(format!("Binary {} not present on system, cannot proceed", binary));
+                    loop { }
+                }
+                Err(SysConfError::DuplicatePriority { num, first, second }) => {
+                    logger.error(format!("Duplicate priority '{}' found in services {} and {}", num, first, second));
+                    loop { }
+                }
+                Err(SysConfError::IncompatibleFlags { service, flag }) => {
+                    logger.error(format!("Service {} cannot use flag {}", service, flag));
+                    loop { }
+                }
+            };
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]

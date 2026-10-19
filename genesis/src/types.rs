@@ -1,9 +1,12 @@
-use std::{fs::File, io::ErrorKind, mem::needs_drop, path::Path};
+use std::{fs::{self, File}, io::ErrorKind, mem::needs_drop, path::Path};
 
+use serde::{Deserialize, Deserializer};
+
+#[derive(Debug)]
 pub enum SysConfError {
     IncompatibleFlags {
-        first: String,
-        second: String,
+        service: String,
+        flag: String,
     },
     BinaryAbsent {
         binary: String,
@@ -61,10 +64,13 @@ pub fn type_check_config(conf: SysConfig) -> Result<SysConfig, SysConfError> {
             },
         }
 
+        // THIS MATCH NEEDS TO MAKE SURE THE FLAGS IN THE CONFIG MAKE SENSE
         match service {
-            SysService::Careless { flags, .. }
-            | SysService::Safe { flags, .. }=> {
-                // check for duplicate flags
+            SysService::Careless { flags, .. } => {
+
+            },
+            SysService::Safe {  flags, .. } => {
+
             },
             _ => {},
         }
@@ -103,4 +109,82 @@ pub fn does_binary_exist(bin: &String) -> Option<SysConfError> {
             error: "Binary unavailable for unknown reason".to_string()
         })
     }
+}
+
+#[derive(Deserialize)]
+struct RawSafe {
+    priority: usize,
+    name: String,
+    bin: String,
+    #[serde(default)]
+    needs: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct RawCareless {
+    priority: usize,
+    name: String,
+    bin: String,
+    #[serde(default)]
+    needs: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct RawUnsafe {
+    priority: usize,
+    name: String,
+    bin: String,
+}
+
+#[derive(Deserialize)]
+struct RawSysConfig {
+    #[serde(default)]
+    safe: Vec<RawSafe>,
+    #[serde(default)]
+    careless: Vec<RawCareless>,
+    #[serde(default)]
+    r#unsafe: Vec<RawUnsafe>,
+}
+
+impl<'de> Deserialize<'de> for SysConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = RawSysConfig::deserialize(deserializer)?;
+        let mut services = Vec::new();
+
+        for s in raw.safe {
+            services.push(SysService::Safe {
+                priority: s.priority,
+                name: s.name,
+                binary: s.bin,
+                flags: s.needs,
+            });
+        }
+
+        for c in raw.careless {
+            services.push(SysService::Careless {
+                priority: c.priority,
+                name: c.name,
+                binary: c.bin,
+                flags: c.needs,
+            });
+        }
+
+        for u in raw.r#unsafe {
+            services.push(SysService::Unsafe {
+                priority: u.priority,
+                name: u.name,
+                binary: u.bin,
+            });
+        }
+
+        Ok(SysConfig { services })
+    }
+}
+
+pub fn parse_config() -> Option<SysConfig> {
+    let Some(content) = fs::read_to_string("/genesis.toml").ok() else { return None; };
+    return toml::from_str::<SysConfig>(&content.as_str()).ok();
 }
