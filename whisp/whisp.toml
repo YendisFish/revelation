@@ -1,0 +1,23 @@
+# default configuration file for whisp
+[[services]]
+priority = 1
+name = "genesis"
+bin = "/bin/genesis"
+# these capabilities will not be attached to the process unless it requests them
+needs = [
+    "io", # This does not give stdin or stdout to the process
+    # io declares that io, when running, may utilize a ring buffer with whisp to write output to the console
+    "fs:/etc/passwd",
+    "fs:/etc/shadow" # once again, doesn't give filesystem access, gives access through whisp
+]
+
+# More "needs"/capabilities
+# | unsafe -> This runs the process completely outside of a container, with the user permissions
+# unsafe is not compatible with any other options
+#
+# | careless -> Runs process containerized but performs no type checking on it
+# | careless:io -> Assigns real, unsafe IO to the process
+# | careless:fs:DIR|* -> Mounts the real filesystem to the process container
+# careless is not compatible with unsafe or safe operations
+#
+# args -> Allows the process to request arguments from whisp. The args are auto parsed, but types must match
