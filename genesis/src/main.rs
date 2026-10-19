@@ -1,8 +1,11 @@
 use oracle::{errors::Unsafe, io::{self, Logger}};
 use std::ffi::CString;
 
+mod types;
+mod engine;
+
 fn main() {
-    let logger = Logger::new("whisp");
+    let logger = Logger::new("genesis");
     logger.write("Init system starting");
 
     logger.write("Mounting system");

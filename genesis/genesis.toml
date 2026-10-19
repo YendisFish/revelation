@@ -1,0 +1,29 @@
+# default configuration file for genesis
+[[safe]]
+priority = 1
+name = "greeter"
+bin = "/bin/greeter"
+# these capabilities will not be attached to the process unless it requests them
+needs = [
+    "io", # This does not give stdin or stdout to the process
+    # io declares that io, when running, may utilize a ring buffer with whisp to write output to the console
+    "fs:/etc/passwd",
+    "fs:/etc/shadow" # once again, doesn't give filesystem access, gives access through whisp
+    # "args" # allows process to see and retrieve arguments passed to it
+]
+
+# [[unsafe]]
+# priority = 1
+# name = "greeter"
+# bin = "/bin/greeter"
+# # there are no flags on an unsafe
+#
+# [[careless]]
+# # careless services are containerized
+# priority = 1
+# name = "greeter"
+# bin = "/bin/greeter"
+# needs = {
+#   "io", # this assigns real and unsafe IO to the process
+#   "fs:DIR|*" # mounts real filesystem into container
+# }

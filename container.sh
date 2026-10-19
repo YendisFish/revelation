@@ -21,9 +21,9 @@ function create_bootable {
 rm -rf /build/ospkg/
 mkdir /build/ospkg
 
-cd /bld/whisp
+cd /bld/genesis
 cargo build --release
-cp ./target/release/whisp $OS/init
+cp ./target/release/genesis $OS/init
 
 create_ramfs
 create_bootable
