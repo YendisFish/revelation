@@ -20,3 +20,8 @@ the type that your system outlines.
 ### How to Build
 Running ``build.sh`` will build the OS within a
 dockerfile.
+
+Or just run this to actually build and start it:
+```sh
+./build.sh && ./start.sh
+```
