@@ -5,7 +5,7 @@ OS="/build/ospkg"
 
 function create_ramfs {
     # create ram filesystem for initial mount
-    mkdir -p $OS/{dev,sys,proc,run,bin}
+    mkdir -p $OS/{dev,sys,proc,run,bin,apps}
 }
 
 function create_diskfs {

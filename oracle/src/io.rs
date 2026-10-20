@@ -3,6 +3,8 @@
  * open up IO for subprocesses.
  */
 
+use std::sync::Arc;
+
 pub struct IoHandle {
 
 }
@@ -16,7 +18,7 @@ impl IoHandle {
 pub struct Logger {
     pub name: String,
     pub time: bool, // eventually indicates if logger should output time
-    pub extra: Vec<Box<dyn Fn() -> String>>
+    pub extra: Vec<Arc<dyn Fn() -> String + Send + Sync>>
 }
 
 impl Logger {

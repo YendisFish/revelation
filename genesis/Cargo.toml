@@ -5,8 +5,10 @@ edition = "2024"
 
 [dependencies]
 libc = "0.2.191"
+libcontainer = "0.7.0"
 oracle = { path = "../oracle" }
 serde = { version = "1.0.229", features = ["derive"] }
+tokio = { version = "1.54.0", default-features = false, features = ["rt", "net", "signal", "sync", "time", "macros", "process"] }
 toml = "1.1.8"
 
 [build]

@@ -23,6 +23,7 @@ pub struct SysConfig {
     pub services: Vec<SysService>,
 }
 
+#[derive(Debug, Clone)]
 pub enum SysService {
     Unsafe {
         priority: usize,
@@ -44,12 +45,14 @@ pub enum SysService {
 }
 
 pub fn type_check_config(conf: SysConfig) -> Result<SysConfig, SysConfError> {
+    // just a vector keeping track of which processes and their requested priority have been seen
     let mut seen: Vec<(usize, String)> = Vec::new();
     for service in &conf.services {
         match service {
             SysService::Unsafe { priority, name, binary }
             | SysService::Careless { priority, name, binary, .. }
             | SysService::Safe { priority, name, binary, .. }=> {
+                // check to see if any processes are requesting the same priority
                 if let Some(dup) = find_duplicate_priorities(&mut seen, (*priority, name)) {
                     return Err(SysConfError::DuplicatePriority {
                         num: dup.0,
@@ -58,6 +61,7 @@ pub fn type_check_config(conf: SysConfig) -> Result<SysConfig, SysConfError> {
                     });
                 }
 
+                // check to see if system actually has the requested binary
                 if let Some(err) = does_binary_exist(binary) {
                     return Err(err);
                 }
@@ -83,12 +87,14 @@ pub fn find_duplicate_priorities(
     haystack: &mut Vec<(usize, String)>,
     needle: (usize, &String),
 ) -> Option<(usize, String, String)> {
+    // check if the values in needle appear in the haystack vector
     for elem in haystack.iter() {
         if needle.0 == elem.0 {
             return Some((needle.0, elem.1.clone(), needle.1.clone()))
         }
     }
 
+    // push the needle to the haystack if it is unique
     haystack.push((needle.0, needle.1.clone()));
     None
 }
@@ -146,6 +152,7 @@ struct RawSysConfig {
     r#unsafe: Vec<RawUnsafe>,
 }
 
+// I genuinely have no clue what this code does!
 impl<'de> Deserialize<'de> for SysConfig {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -185,6 +192,7 @@ impl<'de> Deserialize<'de> for SysConfig {
 }
 
 pub fn parse_config() -> Option<SysConfig> {
+    // safely try and parse/open the config then return it
     let Some(content) = fs::read_to_string("/genesis.toml").ok() else { return None; };
     return toml::from_str::<SysConfig>(&content.as_str()).ok();
 }
