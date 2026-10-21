@@ -1,0 +1,10 @@
+[package]
+name = "phoebe"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+argon2 = "0.6.0"
+password-hash = "0.6.1"
+pwhash = "1.0.0"
+subtle = "2.4"

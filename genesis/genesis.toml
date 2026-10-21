@@ -1,16 +1,16 @@
 # default configuration file for genesis
-[[safe]]
+[[unsafe]]
 priority = 1
-name = "greeter"
-bin = "/bin/greeter"
+name = "phoebe"
+bin = "/bin/phoebe"
 # these capabilities will not be attached to the process unless it requests them
-needs = [
-    "io", # This does not give stdin or stdout to the process
-    # io declares that io, when running, may utilize a ring buffer with whisp to write output to the console
-    "fs:/etc/passwd",
-    "fs:/etc/shadow" # once again, doesn't give filesystem access, gives access through whisp
-    # "args" # allows process to see and retrieve arguments passed to it
-]
+# needs = [
+#     "io", # This does not give stdin or stdout to the process
+#     # io declares that io, when running, may utilize a ring buffer with whisp to write output to the console
+#     "fs:/etc/passwd",
+#     "fs:/etc/shadow" # once again, doesn't give filesystem access, gives access through whisp
+#     # "args" # allows process to see and retrieve arguments passed to it
+# ]
 
 # [[unsafe]]
 # priority = 1

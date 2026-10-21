@@ -6,7 +6,7 @@ OS="/build/ospkg"
 # create directories inside of the ramfs
 function create_ramfs {
     # create ram filesystem for initial mount
-    mkdir -p $OS/{dev,sys,proc,run,bin,apps}
+    mkdir -p $OS/{dev,sys,proc,run,bin,apps,etc}
 }
 
 function create_diskfs {
@@ -24,11 +24,16 @@ function create_bootable {
 rm -rf /build/ospkg/
 mkdir /build/ospkg
 
+create_ramfs
+
 # build genesis and move it into the OS filesystem
 cd /bld/genesis
 cargo build --release
 cp ./target/release/genesis $OS/init
 cp ./genesis.toml $OS/
 
-create_ramfs
+cd /bld/phoebe
+cargo build --release
+cp ./target/release/phoebe $OS/bin/phoebe
+
 create_bootable

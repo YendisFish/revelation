@@ -1,7 +1,7 @@
 use oracle::{errors::Unsafe, io::{self, Logger}};
 use std::{ffi::CString, fmt::format, sync::Arc, time::Duration};
 
-use crate::{engine::{EngineError, GenesisEngine}, types::{SysConfError, parse_config, type_check_config}};
+use crate::{engine::{EngineError, GenesisEngine, setup_lifecycle}, types::{SysConfError, parse_config, type_check_config}};
 
 mod types;
 mod engine;
@@ -63,6 +63,8 @@ fn main() {
              * any errors that bubble up out of it.
              */
             let eng = GenesisEngine::new(logger.clone());
+            setup_lifecycle(conf, eng.clone());
+
             match eng.start_engine() {
                 Err(EngineError::TokioFailure(e)) => {
                     logger.error(format!("Tokio failed with error {}", e));
@@ -80,7 +82,13 @@ fn main() {
                     logger.error(format!("Tokio failed to join async task with error {}", e));
                     std::thread::sleep(Duration::from_secs(5));
                 }
-                _ => {},
+                Err(EngineError::Io(e)) => {
+                    logger.error(format!("Failed to hand stdout to unsafe application with error {}", e));
+                    std::thread::sleep(Duration::from_secs(5));
+                }
+                _ => {
+                    loop { }
+                },
             }
         }
     }

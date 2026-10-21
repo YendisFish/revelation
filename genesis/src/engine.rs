@@ -1,7 +1,7 @@
-use std::{collections::HashMap, iter::Map, sync::{Arc}};
+use std::{collections::HashMap, fs::OpenOptions, iter::Map, process::Stdio, sync::Arc, time::Duration};
 
 use oracle::io::Logger;
-use tokio::{process::{Child, Command}, runtime::Builder, sync::{Mutex, mpsc::{Receiver, Sender, channel}}, task::JoinError};
+use tokio::{process::{Child, ChildStdout, Command}, runtime::Builder, sync::{Mutex, mpsc::{Receiver, Sender, channel}}, task::JoinError, time::sleep};
 
 use crate::types::{SysConfig, SysService};
 
@@ -10,9 +10,10 @@ pub enum EngineError {
     TokioJoin(JoinError),
     TokioCommandError(Arc<dyn std::error::Error + Send + Sync>),
     TokioPidFailure(String),
+    Io(Arc<dyn std::error::Error + Send + Sync>)
 }
 
-pub fn begin_lifecycle(mut conf: SysConfig, eng: Arc<GenesisEngine>) {
+pub fn setup_lifecycle(mut conf: SysConfig, eng: Arc<GenesisEngine>) {
     // sort the services vector by priority so we can iterate through it correctly
     conf.services.sort_by_key(|s| {
         match s {
@@ -27,6 +28,7 @@ pub fn begin_lifecycle(mut conf: SysConfig, eng: Arc<GenesisEngine>) {
         match service {
             SysService::Unsafe { name, binary, .. } => {
                 // binary can literally just be started as a detached process
+                eng.push_task(service.clone());
             },
             SysService::Safe { priority, name, binary, flags } => {
                 // binary needs to be started in a container
@@ -43,7 +45,7 @@ pub struct GenesisProcess {
 }
 
 pub struct GenesisEngine {
-    pub proc_queue: Mutex<(Receiver<SysService>, Arc<Sender<SysService>>)>,
+    pub proc_queue: (Mutex<Receiver<SysService>>, Mutex<Arc<Sender<SysService>>>),
     pub procs: Mutex<HashMap<u32, GenesisProcess>>,
     logger: Arc<Logger>,
 }
@@ -54,7 +56,10 @@ impl GenesisEngine {
         let chan = channel(20);
 
         return Arc::new(GenesisEngine {
-            proc_queue: Mutex::new((chan.1, Arc::new(chan.0))), // deconstruct channel into custom tuple
+            proc_queue: (
+                Mutex::new(chan.1),
+                Mutex::new(Arc::new(chan.0))
+            ), // deconstruct channel into custom tuple
             procs: Mutex::new(HashMap::new()),
             logger: log,
         })
@@ -87,15 +92,23 @@ impl GenesisEngine {
 
     async fn handle_ipc(self: Arc<Self>) {
         // handle incoming requests or data on the io_uring IPC ring buffer
+        sleep(Duration::from_secs(5)).await
     }
 
     async fn handle_unsafe_lifecycles(self: Arc<Self>) -> Result<(), EngineError> {
         // look for any queued processes, and start them
-        while let Some(proc_req) = self.clone().recv().await {
+        loop {
+            let proc_req = {
+                let mut p_q = self.proc_queue.0.lock().await;
+                p_q.recv().await
+            };
+            let Some(proc_req) = proc_req else { continue; };
+
             match proc_req.clone() {
                 // we only want to look at unsafe processes
                 SysService::Unsafe { priority, name, binary } => {
-                    let child = match Command::new(binary).spawn() {
+                    println!("staring process {}", name.clone());
+                    let child = match unsafe_command(binary,  vec![])?.spawn() {
                         Ok(c) => c,
                         Err(e) => return Err(EngineError::TokioCommandError(Arc::new(e))),
                     };
@@ -120,20 +133,34 @@ impl GenesisEngine {
                 }
                 _ => {}
             }
+
+            /*
+             * here we need to cycle through all unsafe processes and
+             * watch for them to end or be killed. We then update our
+             * hashmap accordingly
+             */
+
+            sleep(Duration::from_secs(5)).await
         }
-
-        /*
-         * here we need to cycle through all unsafe processes and
-         * watch for them to end or be killed. We then update our
-         * hashmap accordingly
-         */
-
-        Ok(())
     }
 
-    // grab any processes that are in our process queue (helper function)
-    async fn recv(self: Arc<Self>) -> Option<SysService> {
-        let mut queue = self.proc_queue.lock().await;
-        return queue.0.recv().await;
+    pub fn push_task(self: &Arc<Self>, task: SysService) {
+        let queue = self.proc_queue.1.blocking_lock();
+        _ = queue.blocking_send(task);
     }
+}
+
+fn unsafe_command(bin: String, args: Vec<String>) -> Result<Command, EngineError> {
+    let mut cmd = Command::new(bin);
+
+    let stdio = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/console")
+        .map_err(|e| EngineError::Io(Arc::new(e)))?;
+
+    cmd.stdin(Stdio::from(stdio.try_clone().map_err(|e| EngineError::Io(Arc::new(e)))?));
+    cmd.stdout(Stdio::from(stdio));
+
+    Ok(cmd)
 }
