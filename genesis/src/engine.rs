@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs::OpenOptions, iter::Map, process::Stdio, sync::Arc, time::Duration};
+use std::{collections::HashMap, fmt::format, fs::OpenOptions, iter::Map, path::Path, process::Stdio, sync::Arc, time::Duration};
 
 use oracle::io::Logger;
 use tokio::{process::{Child, ChildStdout, Command}, runtime::Builder, sync::{Mutex, mpsc::{Receiver, Sender, channel}}, task::JoinError, time::sleep};
@@ -10,7 +10,8 @@ pub enum EngineError {
     TokioJoin(JoinError),
     TokioCommandError(Arc<dyn std::error::Error + Send + Sync>),
     TokioPidFailure(String),
-    Io(Arc<dyn std::error::Error + Send + Sync>)
+    Io(Arc<dyn std::error::Error + Send + Sync>),
+    AppNotFound(String),
 }
 
 pub fn setup_lifecycle(mut conf: SysConfig, eng: Arc<GenesisEngine>) {
@@ -92,7 +93,7 @@ impl GenesisEngine {
 
     async fn handle_ipc(self: Arc<Self>) {
         // handle incoming requests or data on the io_uring IPC ring buffer
-        sleep(Duration::from_secs(5)).await
+        sleep(Duration::from_millis(100)).await
     }
 
     async fn handle_unsafe_lifecycles(self: Arc<Self>) -> Result<(), EngineError> {
@@ -107,7 +108,6 @@ impl GenesisEngine {
             match proc_req.clone() {
                 // we only want to look at unsafe processes
                 SysService::Unsafe { priority, name, binary } => {
-                    println!("staring process {}", name.clone());
                     let child = match unsafe_command(binary,  vec![])?.spawn() {
                         Ok(c) => c,
                         Err(e) => return Err(EngineError::TokioCommandError(Arc::new(e))),
@@ -140,7 +140,7 @@ impl GenesisEngine {
              * hashmap accordingly
              */
 
-            sleep(Duration::from_secs(5)).await
+            sleep(Duration::from_millis(100)).await
         }
     }
 
@@ -163,4 +163,18 @@ fn unsafe_command(bin: String, args: Vec<String>) -> Result<Command, EngineError
     cmd.stdout(Stdio::from(stdio));
 
     Ok(cmd)
+}
+
+fn start_or_init_safe(conf_entry: SysService) -> Result<(), EngineError> {
+    match conf_entry {
+        SysService::Safe { priority, name, binary, flags } => {
+            let bin = Path::new(&binary);
+            if !Path::exists(&bin) {
+                return Err(EngineError::AppNotFound(name));
+            }
+        },
+        _ => {},
+    }
+
+    todo!()
 }
