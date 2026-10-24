@@ -1,8 +1,8 @@
 # default configuration file for genesis
-[[unsafe]]
-priority = 1
-name = "phoebe"
-bin = "/bin/phoebe"
+# [[unsafe]]
+# priority = 1
+# name = "phoebe"
+# bin = "/bin/phoebe"
 # these capabilities will not be attached to the process unless it requests them
 # needs = [
 #     "io", # This does not give stdin or stdout to the process
@@ -11,6 +11,12 @@ bin = "/bin/phoebe"
 #     "fs:/etc/shadow" # once again, doesn't give filesystem access, gives access through whisp
 #     # "args" # allows process to see and retrieve arguments passed to it
 # ]
+
+[[safe]]
+priority = 1
+name = "phoebe"
+bin = "/bin/phoebe"
+needs = []
 
 # [[unsafe]]
 # priority = 1

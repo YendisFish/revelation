@@ -26,6 +26,10 @@ fn main() {
         logger.write("Failed to load sysfs");
     }
 
+    if let Err(_) = mount("cgroup2", "/sys/fs/cgroup", "cgroup2", 0) {
+        logger.write("Failed to load cgroup2");
+    }
+
     if let Err(_) = mount("devtmpfs", "/dev", "devtmpfs", 0) {
         logger.write("Failed to load dev");
     }
@@ -85,7 +89,19 @@ fn main() {
                 Err(EngineError::Io(e)) => {
                     logger.error(format!("Failed to hand stdout to unsafe application with error {}", e));
                     std::thread::sleep(Duration::from_secs(5));
-                }
+                },
+                Err(EngineError::ContainerStartError) => {
+                    logger.error("Failed to start container");
+                    std::thread::sleep(Duration::from_secs(5));
+                },
+                Err(EngineError::ContainerGenerationError) => {
+                    logger.error("Failed to build container");
+                    std::thread::sleep(Duration::from_secs(5));
+                },
+                Err(EngineError::AppNotFound(e)) => {
+                    logger.error(format!("Could not find app {}", e));
+                    std::thread::sleep(Duration::from_secs(5));
+                },
                 _ => {
                     loop { }
                 },

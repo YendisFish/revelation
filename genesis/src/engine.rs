@@ -1,5 +1,6 @@
-use std::{collections::HashMap, fmt::format, fs::OpenOptions, iter::Map, path::Path, process::Stdio, sync::Arc, time::Duration};
+use std::{collections::HashMap, fmt::format, fs::{self, OpenOptions}, io::{pipe, stdout}, iter::Map, os::fd::{AsFd, AsRawFd}, path::Path, process::Stdio, sync::Arc, time::Duration};
 
+use libcontainer::{container::{self, Container, builder::ContainerBuilder}, oci_spec::runtime::{LinuxBuilder, LinuxNamespaceBuilder, LinuxNamespaceType, MountBuilder, ProcessBuilder, RootBuilder, Spec, SpecBuilder}, syscall::syscall::SyscallType};
 use oracle::io::Logger;
 use tokio::{process::{Child, ChildStdout, Command}, runtime::Builder, sync::{Mutex, mpsc::{Receiver, Sender, channel}}, task::JoinError, time::sleep};
 
@@ -12,6 +13,8 @@ pub enum EngineError {
     TokioPidFailure(String),
     Io(Arc<dyn std::error::Error + Send + Sync>),
     AppNotFound(String),
+    ContainerGenerationError,
+    ContainerStartError,
 }
 
 pub fn setup_lifecycle(mut conf: SysConfig, eng: Arc<GenesisEngine>) {
@@ -33,6 +36,7 @@ pub fn setup_lifecycle(mut conf: SysConfig, eng: Arc<GenesisEngine>) {
             },
             SysService::Safe { priority, name, binary, flags } => {
                 // binary needs to be started in a container
+                eng.push_task(service.clone());
             }
             _ => {},
         }
@@ -74,26 +78,24 @@ impl GenesisEngine {
 
         // start a blocking async task that concurrently handles process lifecycles
         let ret: Result<(), EngineError> = rt.block_on(async {
-            // these processes will yield voluntarily to the async event loop, instead of lazily with io processes
-            let ipc = tokio::spawn(self.clone().handle_ipc());
-            let unsafe_lifecycle = tokio::spawn(self.clone().handle_unsafe_lifecycles());
-
             // capture any errors that get returned from the engine
-            let ret = tokio::try_join!(
-                ipc,
-                unsafe_lifecycle
-            ).map_err(|e| EngineError::TokioJoin(e))?;
+            tokio::try_join!(
+                self.clone().handle_ipc(),
+                self.clone().handle_unsafe_lifecycles(),
+                self.clone().handle_safe_lifecycles(),
+            )?;
 
-            // return captured result/errors
-            return ret.1;
+            return Ok(());
         });
 
         return ret;
     }
 
-    async fn handle_ipc(self: Arc<Self>) {
+    async fn handle_ipc(self: Arc<Self>) -> Result<(), EngineError> {
         // handle incoming requests or data on the io_uring IPC ring buffer
-        sleep(Duration::from_millis(100)).await
+        loop {
+            sleep(Duration::from_millis(100)).await
+        }
     }
 
     async fn handle_unsafe_lifecycles(self: Arc<Self>) -> Result<(), EngineError> {
@@ -131,7 +133,11 @@ impl GenesisEngine {
                     let mut procs = self.procs.lock().await;
                     procs.insert(pid, genesis_proc);
                 }
-                _ => {}
+                _ => {
+                    // for now we recycle the request
+                    let p_q = self.proc_queue.1.lock().await;
+                    _ = p_q.send(proc_req).await;
+                }
             }
 
             /*
@@ -139,6 +145,25 @@ impl GenesisEngine {
              * watch for them to end or be killed. We then update our
              * hashmap accordingly
              */
+
+            sleep(Duration::from_millis(100)).await
+        }
+    }
+
+    async fn handle_safe_lifecycles(self: Arc<Self>) -> Result<(), EngineError> {
+        loop {
+            let proc_req = {
+                let mut p_q = self.proc_queue.0.lock().await;
+                p_q.recv().await
+            };
+            let Some(proc_req) = proc_req else { continue; };
+
+            match proc_req.clone() {
+                SysService::Safe { priority, name, binary, flags } => {
+                    start_or_init_safe(proc_req)?;
+                },
+                _ => {},
+            }
 
             sleep(Duration::from_millis(100)).await
         }
@@ -170,11 +195,105 @@ fn start_or_init_safe(conf_entry: SysService) -> Result<(), EngineError> {
         SysService::Safe { priority, name, binary, flags } => {
             let bin = Path::new(&binary);
             if !Path::exists(&bin) {
-                return Err(EngineError::AppNotFound(name));
+                return Err(EngineError::AppNotFound(binary.clone()));
             }
+
+            let spec = generate_container_oci_spec(Path::new(&format!("/apps/{}/rootfs/", name)), &name, &binary)?;
+            spec.save(Path::new(&format!("/apps/{}/", name)).join("config.json"))
+                .map_err(|_| EngineError::ContainerGenerationError)?;
+
+            let stdio = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open("/dev/console")
+                .map_err(|e| EngineError::Io(Arc::new(e)))?;
+            let stdio_clone = stdio.try_clone().map_err(|e| EngineError::Io(Arc::new(e)))?;
+
+            let mut container = ContainerBuilder::new(name.clone(), SyscallType::Linux)
+                .with_root_path(format!("/apps/{}/", name))
+                .map_err(|_| EngineError::ContainerGenerationError)?
+                .with_stdout(stdio)
+                .with_stdin(stdio_clone)
+                .as_init(format!("/apps/{}/", name))
+                .with_systemd(false)
+                .build()
+                .map_err(|e| {
+                    eprintln!("{}", e);
+                    EngineError::ContainerGenerationError
+                })?;
+
+            container.start().map_err(|_| EngineError::ContainerStartError)?;
         },
         _ => {},
     }
 
-    todo!()
+    Ok(())
+}
+
+fn generate_container_oci_spec(rootfs: &Path, name: &String, binary: &String) -> Result<Spec, EngineError> {
+    fs::create_dir(Path::new(&format!("/apps/{}", name))).map_err(|e| {
+        eprintln!("{}", e);
+        EngineError::ContainerGenerationError
+    })?;
+
+    fs::create_dir(rootfs).map_err(|e| {
+        eprintln!("{}", e);
+        EngineError::ContainerGenerationError
+    })?;
+
+    println!("1");
+    let process = ProcessBuilder::default()
+        .terminal(false)
+        .cwd(Path::new("/"))
+        .args(vec![format!("/{}", name)])
+        .build()
+        .map_err(|_| EngineError::ContainerGenerationError)?;
+
+    println!("2");
+    let root = RootBuilder::default()
+        .path(rootfs)
+        .readonly(false)
+        .build()
+        .map_err(|_| EngineError::ContainerGenerationError)?;
+
+    println!("3");
+    let namespaces = vec![
+        LinuxNamespaceBuilder::default().typ(LinuxNamespaceType::Pid).build().map_err(|_| EngineError::ContainerGenerationError)?,
+        LinuxNamespaceBuilder::default().typ(LinuxNamespaceType::Network).build().map_err(|_| EngineError::ContainerGenerationError)?,
+        LinuxNamespaceBuilder::default().typ(LinuxNamespaceType::Mount).build().map_err(|_| EngineError::ContainerGenerationError)?,
+        LinuxNamespaceBuilder::default().typ(LinuxNamespaceType::Ipc).build().map_err(|_| EngineError::ContainerGenerationError)?,
+        LinuxNamespaceBuilder::default().typ(LinuxNamespaceType::Uts).build().map_err(|_| EngineError::ContainerGenerationError)?,
+    ];
+
+    println!("4");
+    let linux = LinuxBuilder::default()
+        .namespaces(namespaces)
+        .build()
+        .map_err(|_| EngineError::ContainerGenerationError)?;
+
+    println!("mount");
+    let bin_mount = MountBuilder::default()
+        .destination(format!("/{}", name))
+        .source(binary)
+        .typ("bind")
+        .options(vec![
+            "ro".to_string(),
+            "bind".to_string(),
+        ])
+        .build()
+        .map_err(|_| EngineError::ContainerGenerationError)?;
+
+    println!("5");
+    let spec = SpecBuilder::default()
+        .version("1.0.2")
+        .root(root)
+        .process(process)
+        .linux(linux)
+        .mounts(vec![bin_mount])
+        .build()
+        .map_err(|e| {
+            eprintln!("{}", e);
+            EngineError::ContainerGenerationError})?;
+
+    Ok(spec)
 }
