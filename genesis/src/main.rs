@@ -1,10 +1,16 @@
-use oracle::{errors::Unsafe, io::{self, Logger}};
-use std::{ffi::CString, fmt::format, sync::Arc, time::Duration};
+use oracle::{
+    errors::Unsafe,
+    io::{self, Logger},
+};
+use std::{ffi::CString, fmt::format, fs, sync::Arc, time::Duration};
 
-use crate::{engine::{EngineError, GenesisEngine, setup_lifecycle}, types::{SysConfError, parse_config, type_check_config}};
+use crate::{
+    engine::{EngineError, GenesisEngine, setup_lifecycle},
+    types::{SysConfError, parse_config, type_check_config},
+};
 
-mod types;
 mod engine;
+mod types;
 
 fn main() {
     /*
@@ -16,7 +22,25 @@ fn main() {
     let logger = Arc::new(Logger::new("genesis"));
     logger.write("Init system starting");
 
-    logger.write("Mounting system");
+    if let Err(_) = fs::create_dir_all("/mnt") {
+        logger.write("Could not create mountpoint for filesystem");
+    }
+
+    logger.write("Mounting filesystem");
+    if let Err(e) = mount(
+        "/dev/sda",
+        "/mnt",
+        "ext4",
+        libc::MS_NOATIME | libc::MS_NODIRATIME,
+    ) {
+        logger.write(&format!(
+            "Failed to mount filesystem /dev/sda, error {}",
+            match e {
+                Unsafe::LibcMountError(e) => e,
+                _ => -2,
+            }
+        ));
+    }
 
     if let Err(_) = mount("proc", "/proc", "proc", 0) {
         logger.write("Failed to load proc");
@@ -36,21 +60,27 @@ fn main() {
 
     loop {
         /*
-        * Here we parse our init config, and we also
-        * have the init system check if it's actually
-        * safe to run on the system. And of course any
-        * errors get serialized and pushed to stdout.
-        */
+         * Here we parse our init config, and we also
+         * have the init system check if it's actually
+         * safe to run on the system. And of course any
+         * errors get serialized and pushed to stdout.
+         */
         if let Some(conf) = parse_config() {
             let conf = match type_check_config(conf) {
                 Ok(conf) => conf,
                 Err(SysConfError::BinaryAbsent { binary, .. }) => {
-                    logger.error(format!("Binary {} not present on system, cannot proceed", binary));
+                    logger.error(format!(
+                        "Binary {} not present on system, cannot proceed",
+                        binary
+                    ));
                     std::thread::sleep(Duration::from_secs(5));
                     continue;
                 }
                 Err(SysConfError::DuplicatePriority { num, first, second }) => {
-                    logger.error(format!("Duplicate priority '{}' found in services {} and {}", num, first, second));
+                    logger.error(format!(
+                        "Duplicate priority '{}' found in services {} and {}",
+                        num, first, second
+                    ));
                     std::thread::sleep(Duration::from_secs(5));
                     continue;
                 }
@@ -75,36 +105,40 @@ fn main() {
                     std::thread::sleep(Duration::from_secs(5));
                 }
                 Err(EngineError::TokioCommandError(e)) => {
-                    logger.error(format!("Failed to run process/service with tokio error {}", e));
+                    logger.error(format!(
+                        "Failed to run process/service with tokio error {}",
+                        e
+                    ));
                     std::thread::sleep(Duration::from_secs(5));
                 }
                 Err(EngineError::TokioPidFailure(e)) => {
                     logger.error(format!("Failed to get pid for service/program {}", e));
                     std::thread::sleep(Duration::from_secs(5));
-                },
+                }
                 Err(EngineError::TokioJoin(e)) => {
                     logger.error(format!("Tokio failed to join async task with error {}", e));
                     std::thread::sleep(Duration::from_secs(5));
                 }
                 Err(EngineError::Io(e)) => {
-                    logger.error(format!("Failed to hand stdout to unsafe application with error {}", e));
+                    logger.error(format!(
+                        "Failed to hand stdout to unsafe application with error {}",
+                        e
+                    ));
                     std::thread::sleep(Duration::from_secs(5));
-                },
+                }
                 Err(EngineError::ContainerStartError) => {
                     logger.error("Failed to start container");
                     std::thread::sleep(Duration::from_secs(5));
-                },
+                }
                 Err(EngineError::ContainerGenerationError) => {
                     logger.error("Failed to build container");
                     std::thread::sleep(Duration::from_secs(5));
-                },
+                }
                 Err(EngineError::AppNotFound(e)) => {
                     logger.error(format!("Could not find app {}", e));
                     std::thread::sleep(Duration::from_secs(5));
-                },
-                _ => {
-                    loop { }
-                },
+                }
+                _ => loop {},
             }
         }
     }
@@ -124,13 +158,27 @@ fn mount(source: &str, target: &str, fstype: &str, flags: libc::c_ulong) -> Resu
             c_target.as_ptr(),
             c_fstype.as_ptr(),
             flags,
-            std::ptr::null()
+            std::ptr::null(),
         )
     };
 
     if res == 0 {
         Ok(())
     } else {
-        return Err(Unsafe::LibcMountError);
+        return Err(Unsafe::LibcMountError(
+            std::io::Error::last_os_error().raw_os_error().unwrap_or(-1),
+        ));
     }
 }
+
+#[cfg(target_os = "linux")]
+pub fn bind_mount(source: &str, target: &str, recursive: bool) -> Result<(), Unsafe> {
+    let mut flags: libc::c_ulong = libc::MS_BIND;
+    if recursive {
+        flags |= libc::MS_REC;
+    }
+    // fstype is ignored on MS_BIND, but passing empty string satisfies CString
+    mount(source, target, "", flags)
+}
+
+// pub fn load_kernel_modules() -> Result<(), Unsafe> {}

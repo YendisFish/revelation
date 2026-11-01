@@ -1,4 +1,4 @@
 pub enum Unsafe {
-    LibcMountError,
+    LibcMountError(i32),
     LibcStringError,
 }
