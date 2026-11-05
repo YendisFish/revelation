@@ -1,9 +1,12 @@
 build/
 kernel/extracted/
 initramfs-init/initramfs
-initramfs-init/*.cpio
 initramfs-init/init
 # ^^^ the binary, not the source file.
-initramfs-init/hdd.img
+
+*.img
+*.cpio
+*.o
+*.bin
 
 *.apk

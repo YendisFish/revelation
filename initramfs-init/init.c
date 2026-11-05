@@ -1,5 +1,6 @@
 #include <sys/mount.h>
 #include <sys/stat.h>
+#include <sys/klog.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -39,9 +40,9 @@ int main() {
     print_kmsg("<5>initramfs: /dev/sda found. Mounting to /sysroot...\n");
 
     mkdir("/sysroot", 0755);
-    if (mount("/dev/sda", "/sysroot", "ext4", 0, NULL) != 0) {
+    if (mount("/dev/sda1", "/sysroot", "ext4", 0, NULL) != 0) {
         char error_msg[256];
-        snprintf(error_msg, sizeof(error_msg), "<3>initramfs: Failed to mount /dev/sda to /sysroot: %s\n", strerror(errno));
+        snprintf(error_msg, sizeof(error_msg), "<3>initramfs: Failed to mount /dev/sda1 to /sysroot: %s\n", strerror(errno));
         print_kmsg(error_msg);
     }
 
@@ -51,8 +52,10 @@ int main() {
     mount("/dev", "/sysroot/dev", NULL, MS_MOVE, NULL);
 
     // Change root to the new hdd.
-    chroot("/sysroot");
-    chdir(".");
+    chdir("/sysroot");
+    mount(".", "/", NULL, MS_MOVE, NULL);
+    chroot(".");
+    chdir("/");
 
     print_kmsg("<5>initramfs: Handing off to /bin/sh...\n");
 
@@ -64,6 +67,7 @@ int main() {
     // Eventually replace with /sbin/genesis when that's finished.
     // If you dont have an hdd image file with busybox installed at /bin/sh, then
     // it will panix at the end. This is expected and normal behavior.
+    klogctl(8, NULL, 1); // Makes dmesg stfu and only display on the console in emergencies.
     execve("/bin/sh", argv, envp);
 
     // Incase execve fails.
