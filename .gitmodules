@@ -1,0 +1,6 @@
+[submodule "genesis/beginning/bios/genesis/beginning/bios/lib/lwext4"]
+	path = genesis/beginning/bios/genesis/beginning/bios/lib/lwext4
+	url = https://github.com/gkostka/lwext4.git
+[submodule "genesis/beginning/bios/lib/lwext4"]
+	path = genesis/beginning/bios/lib/lwext4
+	url = https://github.com/gkostka/lwext4.git
