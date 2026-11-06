@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+gpt = "4.1.0"
 libc = "0.2.191"
 libcontainer = "0.7.0"
 oracle = { path = "../oracle" }

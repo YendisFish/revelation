@@ -10,3 +10,9 @@ initramfs-init/init
 *.bin
 
 *.apk
+
+target/
+
+.gemini/
+.agents/
+.vscode/

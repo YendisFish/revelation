@@ -5,12 +5,12 @@ use oracle::{
 use std::{ffi::CString, fmt::format, fs, sync::Arc, time::Duration};
 
 use crate::{
-    engine::{EngineError, GenesisEngine, setup_lifecycle},
-    types::{SysConfError, parse_config, type_check_config},
+    devices::wait_for_partuuid, engine::{EngineError, GenesisEngine, setup_lifecycle}, types::{SysConfError, parse_config, type_check_config},
 };
 
 mod engine;
 mod types;
+mod devices;
 
 fn main() {
     /*
@@ -22,25 +22,21 @@ fn main() {
     let logger = Arc::new(Logger::new("genesis"));
     logger.write("Init system starting");
 
-    if let Err(_) = fs::create_dir_all("/mnt") {
-        logger.write("Could not create mountpoint for filesystem");
-    }
-
-    logger.write("Mounting filesystem");
-    if let Err(e) = mount(
-        "/dev/sda",
-        "/mnt",
-        "ext4",
-        libc::MS_NOATIME | libc::MS_NODIRATIME,
-    ) {
-        logger.write(&format!(
-            "Failed to mount filesystem /dev/sda, error {}",
-            match e {
-                Unsafe::LibcMountError(e) => e,
-                _ => -2,
-            }
-        ));
-    }
+    // logger.write("Mounting filesystem");
+    // if let Err(e) = mount(
+    //     "/dev/sda",
+    //     "/mnt",
+    //     "ext4",
+    //     libc::MS_NOATIME | libc::MS_NODIRATIME,
+    // ) {
+    //     logger.write(&format!(
+    //         "Failed to mount filesystem /dev/sda, error {}",
+    //         match e {
+    //             Unsafe::LibcMountError(e) => e,
+    //             _ => -2,
+    //         }
+    //     ));
+    // }
 
     if let Err(_) = mount("proc", "/proc", "proc", 0) {
         logger.write("Failed to load proc");
@@ -57,6 +53,14 @@ fn main() {
     if let Err(_) = mount("devtmpfs", "/dev", "devtmpfs", 0) {
         logger.write("Failed to load dev");
     }
+
+    let drive = match wait_for_partuuid(logger.clone()) {
+        Some(d) => d,
+        None => {
+            logger.write("Failed to detect drive");
+            return;
+        }
+    };
 
     loop {
         /*

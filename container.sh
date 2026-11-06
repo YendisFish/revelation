@@ -9,19 +9,26 @@ EXTRACTED_MODS="/bld/kernel/extracted/lib/modules/6.6.142-0-virt"
 # create directories inside of the ramfs
 function create_ramfs {
     # create ram filesystem for initial mount
-    mkdir -p $OS/lib
+    mkdir -p $OS/{dev,sys,proc}
 }
 
 function create_diskfs {
-    # create on disk fs
     cd /build/
+    mkdir -p $FS/{run,bin,apps,etc,lib}
 
-    mkdir -p $FS/{dev,sys,sys/fs,sys/fs/cgroup/,proc,run,bin,apps,etc,lib}
+    truncate -s 990M rootfs.ext4
+    mkfs.ext4 -d $FS/ -F rootfs.ext4
 
     truncate -s 1G revelation.img
-    mkfs.ext4 -F revelation.img
 
-    e2cp -r -G 0 -O 0 /build/fspkg/* revelation.img:/
+    sgdisk -o \
+           -n 1:2048:0 \
+           -c 1:"rootfs" \
+           -u 1:12345678-ABCD-EF01-2345-6789ABCDEF01 \
+           revelation.img
+
+    dd if=rootfs.ext4 of=revelation.img bs=512 seek=2048 conv=notrunc status=none
+    rm rootfs.ext4
 }
 
 function create_bootable {
@@ -52,11 +59,12 @@ create_diskfs
 # build genesis and move it into the OS filesystem
 cd /bld/genesis
 cargo build --release
-cp ./target/release/genesis $OS/init
+cp /bld/target/release/genesis $OS/init
 cp ./genesis.toml $OS/
+cp ./boot.toml $OS/
 
 cd /bld/phoebe
 cargo build --release
-cp ./target/release/phoebe $FS/bin/phoebe
+cp /bld/target/release/phoebe $FS/bin/phoebe
 
 create_bootable

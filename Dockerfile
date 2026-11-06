@@ -12,7 +12,8 @@ RUN apk update && apk add --no-cache \
     mtools \
     dosfstools \
     cpio \
-    gzip
+    gzip \
+    sgdisk
 
 RUN rustup target add x86_64-unknown-linux-musl
 
