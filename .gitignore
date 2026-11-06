@@ -8,6 +8,7 @@ initramfs-init/init
 *.cpio
 *.o
 *.bin
+*tar.gz
 
 *.apk
 
