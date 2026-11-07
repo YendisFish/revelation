@@ -22,32 +22,12 @@ fn main() {
     let logger = Arc::new(Logger::new("genesis"));
     logger.write("Init system starting");
 
-    // logger.write("Mounting filesystem");
-    // if let Err(e) = mount(
-    //     "/dev/sda",
-    //     "/mnt",
-    //     "ext4",
-    //     libc::MS_NOATIME | libc::MS_NODIRATIME,
-    // ) {
-    //     logger.write(&format!(
-    //         "Failed to mount filesystem /dev/sda, error {}",
-    //         match e {
-    //             Unsafe::LibcMountError(e) => e,
-    //             _ => -2,
-    //         }
-    //     ));
-    // }
-
     if let Err(_) = mount("proc", "/proc", "proc", 0) {
         logger.write("Failed to load proc");
     }
 
     if let Err(_) = mount("sysfs", "/sys", "sysfs", 0) {
         logger.write("Failed to load sysfs");
-    }
-
-    if let Err(_) = mount("cgroup2", "/sys/fs/cgroup", "cgroup2", 0) {
-        logger.write("Failed to load cgroup2");
     }
 
     if let Err(_) = mount("devtmpfs", "/dev", "devtmpfs", 0) {
@@ -62,7 +42,54 @@ fn main() {
         }
     };
 
+    logger.write("Mounting filesystem");
+    _ = fs::create_dir_all("/mnt");
+    if let Err(e) = mount(
+        &drive,
+        "/mnt",
+        "ext4",
+        libc::MS_NOATIME | libc::MS_NODIRATIME,
+    ) {
+        logger.write(&format!(
+            "Failed to mount filesystem /dev/sda, error {}",
+            match e {
+                Unsafe::LibcMountError(e) => e,
+                _ => -2,
+            }
+        ));
+    }
+
+    _ = fs::create_dir_all("/mnt/sys");
+    _ = fs::create_dir_all("/mnt/sys/fs/cgroup");
+    _ = fs::create_dir_all("/mnt/proc");
+    _ = fs::create_dir_all("/mnt/dev");
+
+    if let Err(_) = mount("/proc", "/mnt/proc", "", libc::MS_BIND | libc::MS_REC) {
+        logger.write("Failed to remount proc");
+    }
+
+    if let Err(_) = mount("/sys", "/mnt/sys", "", libc::MS_BIND | libc::MS_REC) {
+        logger.write("Failed to remount sysfs");
+    }
+
+    if let Err(_) = mount("cgroup2", "/mnt/sys/fs/cgroup", "cgroup2", libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC) {
+        logger.write("Failed to load cgroup2");
+    }
+
+    if let Err(_) = mount("/dev", "/mnt/dev", "", libc::MS_BIND | libc::MS_REC) {
+        logger.write("Failed to remount dev");
+    }
+
+    if let Err(_) = chroot("/mnt") {
+        logger.error(&format!("Could not chroot into mount"));
+    }
+
+    if let Err(_) = chdir("/") {
+        logger.error(&format!("Could not change directory to new root"));
+    }
+
     loop {
+        logger.write("Beginning init loop");
         /*
          * Here we parse our init config, and we also
          * have the init system check if it's actually
@@ -125,7 +152,7 @@ fn main() {
                 }
                 Err(EngineError::Io(e)) => {
                     logger.error(format!(
-                        "Failed to hand stdout to unsafe application with error {}",
+                        "Failed to hand stdout to application with error {}",
                         e
                     ));
                     std::thread::sleep(Duration::from_secs(5));
@@ -170,6 +197,38 @@ fn mount(source: &str, target: &str, fstype: &str, flags: libc::c_ulong) -> Resu
         Ok(())
     } else {
         return Err(Unsafe::LibcMountError(
+            std::io::Error::last_os_error().raw_os_error().unwrap_or(-1),
+        ));
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn chroot(name: &str) -> Result<(), Unsafe> {
+    let c_name = CString::new(name).map_err(|_| Unsafe::LibcStringError)?;
+    let res = unsafe {
+        libc::chroot(c_name.as_ptr())
+    };
+
+    if res == 0 {
+        Ok(())
+    } else {
+        return Err(Unsafe::LibcChrootError(
+            std::io::Error::last_os_error().raw_os_error().unwrap_or(-1),
+        ));
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn chdir(name: &str) -> Result<(), Unsafe> {
+    let c_name = CString::new(name).map_err(|_| Unsafe::LibcStringError)?;
+    let res = unsafe {
+        libc::chdir(c_name.as_ptr())
+    };
+
+    if res == 0 {
+        Ok(())
+    } else {
+        return Err(Unsafe::LibcChdirError(
             std::io::Error::last_os_error().raw_os_error().unwrap_or(-1),
         ));
     }

@@ -15,7 +15,10 @@ function create_ramfs {
 function create_diskfs {
     cd /build/
     mkdir -p $FS/{run,bin,apps,etc,lib}
+}
 
+function pack_disk_fs {
+    cd /build/
     truncate -s 990M rootfs.ext4
     mkfs.ext4 -d $FS/ -F rootfs.ext4
 
@@ -60,11 +63,12 @@ create_diskfs
 cd /bld/genesis
 cargo build --release
 cp /bld/target/release/genesis $OS/init
-cp ./genesis.toml $OS/
+cp ./genesis.toml $FS/
 cp ./boot.toml $OS/
 
 cd /bld/phoebe
 cargo build --release
 cp /bld/target/release/phoebe $FS/bin/phoebe
 
+pack_disk_fs
 create_bootable

@@ -3,6 +3,7 @@ use std::{fs, sync::Arc, thread, time::Duration};
 use oracle::io::Logger;
 use serde::Deserialize;
 use tokio::time::Instant;
+use gpt::{disk::LogicalBlockSize, GptConfig};
 
 pub struct DeviceManager {
 
@@ -12,41 +13,6 @@ pub struct DeviceManager {
 pub struct BootToml {
     pub uuid: String,
 }
-
-// pub fn wait_for_partuuid(logger: Arc<Logger>) -> Option<String> {
-//     let timeout_loops = 100; // 10 seconds total
-//
-//     let Some(content) = fs::read_to_string("/boot.toml").ok() else { return None; };
-//     let Some(info) = toml::from_str::<BootToml>(&content.as_str()).ok() else { return None; };
-//     logger.write(&format!("Looking for {}", info.uuid));
-//
-//     for _ in 0..timeout_loops {
-//         // Scan /sys/class/block for all block devices and partitions
-//         if let Ok(entries) = fs::read_dir("/sys/class/block") {
-//             for entry in entries.flatten() {
-//                 let dev_name = entry.file_name().into_string().unwrap();
-//                 let dev_path = format!("/dev/{}", dev_name);
-//                 logger.write(&format!("Checking {}", dev_path));
-//
-//                 // Open the device node and attempt to read the GPT header
-//                 if let Ok(mut file) = std::fs::File::open(&dev_path) {
-//                     if let Ok(gpt_config) = gpt::GptConfig::new().open(&dev_path) {
-//                         for (_, partition) in gpt_config.partitions() {
-//                             if partition.part_guid.to_string().eq_ignore_ascii_case(&info.uuid) {
-//                                 logger.write("Found drive");
-//                                 return Some(dev_path);
-//                             }
-//                         }
-//                     }
-//                 }
-//             }
-//         }
-//         thread::sleep(Duration::from_millis(100));
-//     }
-//     None
-// }
-
-use gpt::{disk::LogicalBlockSize, GptConfig};
 
 pub fn wait_for_partuuid(logger: Arc<Logger>) -> Option<String> {
     let timeout_loops = 100; // 10 seconds total
