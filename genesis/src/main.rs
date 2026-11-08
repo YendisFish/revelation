@@ -22,6 +22,7 @@ fn main() {
     let logger = Arc::new(Logger::new("genesis"));
     logger.write("Init system starting");
 
+    // mount necessary system dirs into ramfs
     if let Err(_) = mount("proc", "/proc", "proc", 0) {
         logger.write("Failed to load proc");
     }
@@ -34,6 +35,7 @@ fn main() {
         logger.write("Failed to load dev");
     }
 
+    // wait for the primary drive listed in boot.toml, and find it
     let drive = match wait_for_partuuid(logger.clone()) {
         Some(d) => d,
         None => {
@@ -42,6 +44,7 @@ fn main() {
         }
     };
 
+    // mount drive and forward virtual directories into it
     logger.write("Mounting filesystem");
     _ = fs::create_dir_all("/mnt");
     if let Err(e) = mount(
@@ -80,6 +83,7 @@ fn main() {
         logger.write("Failed to remount dev");
     }
 
+    // switch to main system root
     if let Err(_) = chroot("/mnt") {
         logger.error(&format!("Could not chroot into mount"));
     }

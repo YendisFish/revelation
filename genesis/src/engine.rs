@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt::format, fs::{self, OpenOptions}, io::{pipe, stdout}, iter::Map, os::fd::{AsFd, AsRawFd}, path::Path, process::Stdio, sync::Arc, time::Duration};
 
-use libcontainer::{container::{self, Container, builder::ContainerBuilder}, oci_spec::runtime::{LinuxBuilder, LinuxNamespaceBuilder, LinuxNamespaceType, MountBuilder, ProcessBuilder, RootBuilder, Spec, SpecBuilder}, syscall::syscall::SyscallType};
-use oracle::io::Logger;
+use libcontainer::{container::{self, Container, builder::ContainerBuilder}, oci_spec::{self, runtime::{LinuxBuilder, LinuxNamespaceBuilder, LinuxNamespaceType, MountBuilder, ProcessBuilder, RootBuilder, Spec, SpecBuilder}}, syscall::syscall::SyscallType};
+use oracle::{debug, io::Logger};
 use tokio::{process::{Child, ChildStdout, Command}, runtime::Builder, sync::{Mutex, mpsc::{Receiver, Sender, channel}}, task::JoinError, time::sleep};
 
 use crate::types::{SysConfig, SysService};
@@ -15,6 +15,7 @@ pub enum EngineError {
     AppNotFound(String),
     ContainerGenerationError,
     ContainerStartError,
+    ContainerPidError(String),
 }
 
 pub fn setup_lifecycle(mut conf: SysConfig, eng: Arc<GenesisEngine>) {
@@ -45,8 +46,17 @@ pub fn setup_lifecycle(mut conf: SysConfig, eng: Arc<GenesisEngine>) {
 
 pub struct GenesisProcess {
     pub sys_service: SysService,
-    pub pid: u32,
-    pub proc: Child,
+    pub inf: GenesisProcInfo,
+}
+
+pub enum GenesisProcInfo {
+    Cmd {
+       pid: u32,
+       child: Child,
+    },
+    Container {
+        container: Container,
+    },
 }
 
 pub struct GenesisEngine {
@@ -125,8 +135,7 @@ impl GenesisEngine {
 
                     let genesis_proc = GenesisProcess {
                         sys_service: proc_req.clone(),
-                        pid: pid,
-                        proc: child,
+                        inf: GenesisProcInfo::Cmd { pid, child }
                     };
 
                     // lock the process hashmap and insert our new process
@@ -160,10 +169,32 @@ impl GenesisEngine {
 
             match proc_req.clone() {
                 SysService::Safe { priority, name, binary, flags } => {
-                    start_or_init_safe(proc_req)?;
+                    let container = start_or_init_safe(self.logger.clone(), proc_req.clone())?;
+
+                    let genesis_proc = GenesisProcess {
+                        sys_service: proc_req.clone(),
+                        inf: GenesisProcInfo::Container { container: container.clone() }
+                    };
+
+                    let pid = match container.pid() {
+                        Some(pid) => pid,
+                        None => return Err(EngineError::ContainerPidError("Could not get container pid".to_string()))
+                    };
+
+                    // lock the process hashmap and insert our new process
+                    let mut procs = self.procs.lock().await;
+                    procs.insert(pid.as_raw() as u32, genesis_proc);
                 },
-                _ => {},
+                _ => {
+                    // recycle queue item if it doesn't belong here
+                    let p_q = self.proc_queue.1.lock().await;
+                    _ = p_q.send(proc_req).await;
+                },
             }
+
+            /*
+             * Iterate through running containers and handle them
+             */
 
             sleep(Duration::from_millis(100)).await
         }
@@ -178,6 +209,7 @@ impl GenesisEngine {
 fn unsafe_command(bin: String, args: Vec<String>) -> Result<Command, EngineError> {
     let mut cmd = Command::new(bin);
 
+    // attach stdio
     let stdio = OpenOptions::new()
         .read(true)
         .write(true)
@@ -187,21 +219,53 @@ fn unsafe_command(bin: String, args: Vec<String>) -> Result<Command, EngineError
     cmd.stdin(Stdio::from(stdio.try_clone().map_err(|e| EngineError::Io(Arc::new(e)))?));
     cmd.stdout(Stdio::from(stdio));
 
+    // return command
     Ok(cmd)
 }
 
-fn start_or_init_safe(conf_entry: SysService) -> Result<(), EngineError> {
+fn start_or_init_safe(logger: Arc<Logger>, conf_entry: SysService) -> Result<Container, EngineError> {
     match conf_entry {
         SysService::Safe { priority, name, binary, flags } => {
             let bin = Path::new(&binary);
             if !Path::exists(&bin) {
+                // error if the requested binary doesn't exist
                 return Err(EngineError::AppNotFound(binary.clone()));
             }
 
-            let spec = generate_container_oci_spec(Path::new(&format!("/apps/{}/rootfs/", name)), &name, &binary)?;
-            spec.save(Path::new(&format!("/apps/{}/", name)).join("config.json"))
+            let string_path = format!("/apps/{}/", name);
+            let container_root = Path::new(&string_path);
+
+            if !container_root.exists() {
+                // create container root
+                fs::create_dir_all(container_root.join("rootfs/")).map_err(|e| {
+                    eprintln!("{}", e);
+                    EngineError::ContainerGenerationError
+                })?;
+
+                // create dirs which libcontainer expects
+                let base_dirs = ["proc", "sys", "dev", "dev/pts", "dev/shm"];
+                for dir in base_dirs.iter() {
+                    fs::create_dir_all(container_root.join("rootfs/").join(dir)).map_err(|e| {
+                        eprintln!("Failed to create mount target {}: {}", dir, e);
+                        EngineError::ContainerGenerationError
+                    })?;
+                }
+
+                // create faux binary
+                let target_bin = container_root.join("rootfs/").join(&name);
+                fs::File::create(&target_bin).map_err(|e| {
+                    eprintln!("Failed to create bind mount target: {}", e);
+                    EngineError::ContainerGenerationError
+                })?;
+            }
+
+            // generate, or regenerate, oci config
+            let spec = generate_container_oci_spec(&container_root.join("rootfs/"), &name, &binary)?;
+            spec.save(container_root.join("config.json"))
                 .map_err(|_| EngineError::ContainerGenerationError)?;
 
+            // attach stdio
+            // this shouldn't be permanent, eventually there should be a journaling system
             let stdio = OpenOptions::new()
                 .read(true)
                 .write(true)
@@ -209,12 +273,13 @@ fn start_or_init_safe(conf_entry: SysService) -> Result<(), EngineError> {
                 .map_err(|e| EngineError::Io(Arc::new(e)))?;
             let stdio_clone = stdio.try_clone().map_err(|e| EngineError::Io(Arc::new(e)))?;
 
+            // build container
             let mut container = ContainerBuilder::new(name.clone(), SyscallType::Linux)
-                .with_root_path(format!("/apps/{}/", name))
+                .with_root_path(string_path.clone())
                 .map_err(|_| EngineError::ContainerGenerationError)?
                 .with_stdout(stdio)
                 .with_stdin(stdio_clone)
-                .as_init(format!("/apps/{}/", name))
+                .as_init(string_path.clone())
                 .with_systemd(false)
                 .build()
                 .map_err(|e| {
@@ -222,26 +287,18 @@ fn start_or_init_safe(conf_entry: SysService) -> Result<(), EngineError> {
                     EngineError::ContainerGenerationError
                 })?;
 
+            // run container
             container.start().map_err(|_| EngineError::ContainerStartError)?;
+            return Ok(container);
         },
         _ => {},
     }
 
-    Ok(())
+    Err(EngineError::ContainerGenerationError)
 }
 
 fn generate_container_oci_spec(rootfs: &Path, name: &String, binary: &String) -> Result<Spec, EngineError> {
-    fs::create_dir(Path::new(&format!("/apps/{}", name))).map_err(|e| {
-        eprintln!("{}", e);
-        EngineError::ContainerGenerationError
-    })?;
-
-    fs::create_dir(rootfs).map_err(|e| {
-        eprintln!("{}", e);
-        EngineError::ContainerGenerationError
-    })?;
-
-    println!("1");
+    // process that will run in the container
     let process = ProcessBuilder::default()
         .terminal(false)
         .cwd(Path::new("/"))
@@ -249,14 +306,14 @@ fn generate_container_oci_spec(rootfs: &Path, name: &String, binary: &String) ->
         .build()
         .map_err(|_| EngineError::ContainerGenerationError)?;
 
-    println!("2");
+    // define filesystem root
     let root = RootBuilder::default()
         .path(rootfs)
         .readonly(false)
         .build()
         .map_err(|_| EngineError::ContainerGenerationError)?;
 
-    println!("3");
+    // attach namespaces/permissions for container
     let namespaces = vec![
         LinuxNamespaceBuilder::default().typ(LinuxNamespaceType::Pid).build().map_err(|_| EngineError::ContainerGenerationError)?,
         LinuxNamespaceBuilder::default().typ(LinuxNamespaceType::Network).build().map_err(|_| EngineError::ContainerGenerationError)?,
@@ -265,13 +322,13 @@ fn generate_container_oci_spec(rootfs: &Path, name: &String, binary: &String) ->
         LinuxNamespaceBuilder::default().typ(LinuxNamespaceType::Uts).build().map_err(|_| EngineError::ContainerGenerationError)?,
     ];
 
-    println!("4");
+    // Linux containers
     let linux = LinuxBuilder::default()
         .namespaces(namespaces)
         .build()
         .map_err(|_| EngineError::ContainerGenerationError)?;
 
-    println!("mount");
+    // mount our real binary into the container
     let bin_mount = MountBuilder::default()
         .destination(format!("/{}", name))
         .source(binary)
@@ -283,13 +340,17 @@ fn generate_container_oci_spec(rootfs: &Path, name: &String, binary: &String) ->
         .build()
         .map_err(|_| EngineError::ContainerGenerationError)?;
 
-    println!("5");
+    // combine our custom mount with some default mounts
+    let mut mounts = oci_spec::runtime::get_default_mounts();
+    mounts.push(bin_mount);
+
+    // generate spec
     let spec = SpecBuilder::default()
         .version("1.0.2")
         .root(root)
         .process(process)
         .linux(linux)
-        .mounts(vec![bin_mount])
+        .mounts(mounts)
         .build()
         .map_err(|e| {
             eprintln!("{}", e);
