@@ -55,8 +55,13 @@ help_msg = f"""
 Standard usage - hardhat -s full
 
 Build Steps:
-    - {Color.BLUE}full{Color.RESET}
-"""
+    - {Color.BLUE}full{Color.RESET}: removes old artifacts and rebuilds everything
+    - {Color.BLUE}ospkg{Color.RESET}: rebuilds initramfs
+    - {Color.BLUE}fspkg{Color.RESET}: rebuilds diskfs
+    - {Color.BLUE}genesis{Color.RESET}: rebuilds genesis init system
+    - {Color.BLUE}phoebe{Color.RESET}: rebuilds phoebe greeter
+    - {Color.BLUE}userspace{Color.RESET}: rebuilds all userspace applications
+ """
 
 parser = argparse.ArgumentParser(
     prog="hardhat",
@@ -102,6 +107,7 @@ paths = {
 def build_all():
     logger.info("performing full build")
 
+    logger.info("removing old build artifacts")
     shutil.rmtree(paths["OS"], ignore_errors=True)
     shutil.rmtree(paths["FS"], ignore_errors=True)
 
