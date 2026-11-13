@@ -1,7 +1,7 @@
 [BITS 16]
 [ORG 0x7E00]
 KERNEL_ENTRY equ 0x9000       ; must match the load address in linker.ld
-KERNEL_LBA   equ 5            ; sect 0 = boot.bin, sect 1-4 = stage2.bin
+KERNEL_LBA   equ 38           ; sect 34-37 = stage2.bin, sect 38+ = kernel.bin
 READ_CHUNK   equ 64           ; sect per BIOS call
 
 ; KERNEL_SECTORS is passed by the Makefil (nasm -DKERNEL_SECTORS=)

@@ -175,6 +175,9 @@ fn main() {
                 }
                 _ => loop {},
             }
+        } else {
+            logger.write("Could not find config file, trying again in 5 seconds");
+            std::thread::sleep(Duration::from_secs(5));
         }
     }
 }
