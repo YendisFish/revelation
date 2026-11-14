@@ -39,6 +39,8 @@ mkdir -p "$REPO_DIR/build"
 # 5. Run Hardhat in container with persistent build caching and current repo mounted
 echo "=> Invoking Hardhat build system..."
 docker run --rm --platform linux/amd64 \
+    --user "$(id -u):$(id -g)" \
     -v "$REPO_DIR/build:/build" \
     -v "$REPO_DIR:/bld" \
     revelation-builder "$@"
+
